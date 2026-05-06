@@ -24,15 +24,22 @@ function App() {
     }
   }, []);
 
-  // Decodificar el token para obtener datos del usuario
+  // Decodificar el token para obtener datos del usuario y verificar validez
   useEffect(() => {
     if (token) {
       try {
         const payload = JSON.parse(atob(token.split(".")[1]));
-        setUser({ name: payload.name, email: payload.email });
+        // Verificar que el token tenga email y no haya expirado
+        const currentTime = Math.floor(Date.now() / 1000);
+        if (payload.email && payload.exp && payload.exp > currentTime) {
+          setUser({ name: payload.name, email: payload.email });
+        } else {
+          console.warn("Token inválido o expirado, cerrando sesión.");
+          logout();
+        }
       } catch (error) {
         console.error("Error decodificando token:", error);
-        logout(); // Si el token es inválido, cerramos sesión
+        logout();
       }
     } else {
       setUser(null);
@@ -141,6 +148,8 @@ function App() {
     setUser(null);
     setTasks([]);
     setLoading(false);
+    // Recargar la página para resetear completamente el estado (opcional)
+    // window.location.reload();
   };
 
   // Si no hay token, mostrar pantalla de login
