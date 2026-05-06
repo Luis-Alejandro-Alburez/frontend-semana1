@@ -1,39 +1,3 @@
-/* import { useState, useEffect } from "react";
-import "./App.css";
-
-function App() {
-  const [message, setMessage] = useState("Cargando...");
-  const [dbTime, setDbTime] = useState("");
-
-  useEffect(() => {
-    // Reemplaza con la URL de tu backend desplegado
-    const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
-
-    fetch(`${API_URL}/api/health`)
-      .then((res) => res.json())
-      .then((data) => setMessage(data.message))
-      .catch((err) => setMessage("Error al conectar con el backend"));
-
-    fetch(`${API_URL}/api/db-test`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success) setDbTime(`Base de datos conectada: ${data.time}`);
-        else setDbTime("Error conectando a la base de datos");
-      })
-      .catch(() => setDbTime("Error conectando a la base de datos"));
-  }, []);
-
-  return (
-    <div className="App">
-      <h1>{message}</h1>
-      <p>{dbTime}</p>
-    </div>
-  );
-}
-
-export default App;
- */
-
 import { useState, useEffect } from "react";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
@@ -42,15 +6,59 @@ function App() {
   const [tasks, setTasks] = useState([]);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [loading, setLoading] = useState(true);
+  const [token, setToken] = useState(null);
+  const [user, setUser] = useState(null);
 
-  // Cargar tareas al iniciar
+  // Capturar token de la URL (al volver de Google) o del localStorage
   useEffect(() => {
-    fetchTasks();
+    const urlParams = new URLSearchParams(window.location.search);
+    const tokenFromUrl = urlParams.get("token");
+    if (tokenFromUrl) {
+      localStorage.setItem("token", tokenFromUrl);
+      setToken(tokenFromUrl);
+      // Limpiar la URL (quitar el token)
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else {
+      const storedToken = localStorage.getItem("token");
+      if (storedToken) setToken(storedToken);
+    }
   }, []);
+
+  // Decodificar el token para obtener datos del usuario
+  useEffect(() => {
+    if (token) {
+      try {
+        const payload = JSON.parse(atob(token.split(".")[1]));
+        setUser({ name: payload.name, email: payload.email });
+      } catch (error) {
+        console.error("Error decodificando token:", error);
+        logout(); // Si el token es inválido, cerramos sesión
+      }
+    } else {
+      setUser(null);
+    }
+  }, [token]);
+
+  // Cargar tareas solo si hay token
+  useEffect(() => {
+    if (token) {
+      fetchTasks();
+    } else {
+      setLoading(false);
+    }
+  }, [token]);
 
   const fetchTasks = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/tasks`);
+      const res = await fetch(`${API_URL}/api/tasks`, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+      });
+      if (!res.ok) {
+        if (res.status === 401) logout();
+        throw new Error("Error al cargar tareas");
+      }
       const data = await res.json();
       setTasks(data);
     } catch (error) {
@@ -66,9 +74,16 @@ function App() {
     try {
       const res = await fetch(`${API_URL}/api/tasks`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
         body: JSON.stringify({ title: newTaskTitle }),
       });
+      if (!res.ok) {
+        if (res.status === 401) logout();
+        throw new Error("Error al crear tarea");
+      }
       const newTask = await res.json();
       setTasks([newTask, ...tasks]);
       setNewTaskTitle("");
@@ -81,9 +96,16 @@ function App() {
     try {
       const res = await fetch(`${API_URL}/api/tasks/${task.id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
         body: JSON.stringify({ completed: !task.completed }),
       });
+      if (!res.ok) {
+        if (res.status === 401) logout();
+        throw new Error("Error al actualizar tarea");
+      }
       const updatedTask = await res.json();
       setTasks(tasks.map((t) => (t.id === updatedTask.id ? updatedTask : t)));
     } catch (error) {
@@ -93,18 +115,81 @@ function App() {
 
   const deleteTask = async (id) => {
     try {
-      await fetch(`${API_URL}/api/tasks/${id}`, { method: "DELETE" });
+      const res = await fetch(`${API_URL}/api/tasks/${id}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+      });
+      if (!res.ok) {
+        if (res.status === 401) logout();
+        throw new Error("Error al eliminar tarea");
+      }
       setTasks(tasks.filter((t) => t.id !== id));
     } catch (error) {
       console.error("Error al eliminar tarea:", error);
     }
   };
 
+  const loginWithGoogle = () => {
+    window.location.href = `${API_URL}/auth/google`;
+  };
+
+  const logout = () => {
+    localStorage.removeItem("token");
+    setToken(null);
+    setUser(null);
+    setTasks([]);
+    setLoading(false);
+  };
+
+  // Si no hay token, mostrar pantalla de login
+  if (!token) {
+    return (
+      <div style={{ textAlign: "center", marginTop: "50px" }}>
+        <h1>Bienvenido a Tareas App</h1>
+        <button
+          onClick={loginWithGoogle}
+          style={{ padding: "10px 20px", fontSize: "16px", cursor: "pointer" }}
+        >
+          Iniciar sesión con Google
+        </button>
+      </div>
+    );
+  }
+
   if (loading) return <div>Cargando tareas...</div>;
 
   return (
     <div style={{ maxWidth: "600px", margin: "0 auto", padding: "20px" }}>
-      <h1>Lista de Tareas</h1>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: "20px",
+        }}
+      >
+        <h1>Lista de Tareas</h1>
+        <div>
+          <span style={{ marginRight: "10px" }}>
+            Hola, {user?.name} ({user?.email})
+          </span>
+          <button
+            onClick={logout}
+            style={{
+              padding: "6px 12px",
+              backgroundColor: "#dc3545",
+              color: "white",
+              border: "none",
+              borderRadius: "4px",
+              cursor: "pointer",
+            }}
+          >
+            Cerrar sesión
+          </button>
+        </div>
+      </div>
       <form onSubmit={createTask}>
         <input
           type="text"
@@ -115,7 +200,7 @@ function App() {
         />
         <button
           type="submit"
-          style={{ padding: "8px 16px", marginLeft: "8px" }}
+          style={{ padding: "8px 16px", marginLeft: "8px", cursor: "pointer" }}
         >
           Agregar
         </button>
@@ -152,6 +237,7 @@ function App() {
                 border: "none",
                 borderRadius: "4px",
                 padding: "4px 8px",
+                cursor: "pointer",
               }}
             >
               Eliminar
